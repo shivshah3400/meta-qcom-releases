@@ -1,0 +1,37 @@
+name: Run kas for a specific build configuration
+inputs:
+  machine:
+    required: true
+  distro_yaml:
+    required: true
+  distro_name:
+    required: true
+  kernel_yaml:
+    required: true
+  kernel_dirname:
+    required: true
+  cache_dir:
+    required: true
+  kas:
+    required: true
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Setup build variables and sstate-cache
+      shell: bash
+      run: |
+        # use a monthly sstate cache folder
+        echo "DL_DIR=${{inputs.cache_dir}}/downloads" >> $GITHUB_ENV
+        echo "SSTATE_DIR=${{inputs.cache_dir}}/sstate-cache-$(date '+%Y-%m')" >> $GITHUB_ENV
+        echo "KAS_WORK_DIR=$PWD" >> $GITHUB_ENV
+
+    - name: Kas qcom build
+      shell: bash
+      run: |
+
+        ${{inputs.kas}} checkout lock.yml
+        ls
+        cp lock.yml meta-qcom/ci/lock.yml
+        ${{inputs.kas}} build meta-qcom/ci/${{inputs.machine}}.yml:meta-qcom/ci/${{inputs.distro_yaml}}:meta-qcom/ci/lock.yml
