@@ -1,0 +1,80 @@
+name: Build Yocto
+
+on:
+  workflow_call:
+    inputs:
+      release-tags:
+        description: 'Comma separated tag values'
+        type: string
+        required: false
+        default: ""
+
+
+jobs:
+  kas-setup:
+    if: github.repository_owner == 'shivshah3400'
+    runs-on: [self-hosted, qcom-u2404, amd64]
+    steps:
+      - name: Set env variables
+        run: |
+          mkdir -p kas-mirrors 
+          echo "KAS_REPO_REF_DIR=$PWD/kas-mirrors" >> $GITHUB_ENV
+          echo "KAS_CONTAINER=$PWD/kas-mirrors/kas-container" >> $GITHUB_ENV
+
+      - name: Setup kas-container
+        run: |
+          LATEST=$(git ls-remote --tags --refs --sort="v:refname" https://github.com/siemens/kas | tail -n1 | sed 's/.*\///')
+          wget -qO ${KAS_CONTAINER} https://raw.githubusercontent.com/siemens/kas/refs/tags/$LATEST/kas-container
+          chmod +x ${KAS_CONTAINER}
+
+      - name: Update kas mirrors
+        run: |
+          for r in $(find ${KAS_REPO_REF_DIR}/* -maxdepth 0 -type d); do
+            echo "pre-fetch: $r"
+            git -C $r fetch --prune origin '+refs/*:refs/*'
+          done
+
+  compile:
+    needs: kas-setup
+    if: github.repository_owner == 'shivshah3400'
+    runs-on: [self-hosted, qcom-u2404, amd64]
+    strategy:
+      fail-fast: true
+      matrix:
+        machine:
+          - rb3gen2-core-kit
+        distro:
+          - name: qcom-distro-prop-image
+            yamlfile: 'qcom-distro-prop-image.yml'
+        kernel:
+          - type: default
+            dirname: ""
+            yamlfile: ""
+    name: ${{ matrix.machine }}/${{ matrix.distro.name }}${{ matrix.kernel.dirname }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch tags to build
+        id: fetch_tags
+        shell: bash
+        run: |
+          git fetch --tags
+          if [[ -n "${{ inputs.release-tags }}" ]]; then
+            TAGS=$(echo "${{ inputs.release-tags }}" | tr ',' '\n' | xargs -I{} echo "{}" | sort -V)
+          else
+            TAGS=$(git tag --sort=v:refname)
+          fi
+          echo "tags=$TAGS" >> $GITHUB_OUTPUT
+
+      - name: Run kas build
+        uses: ./.github/actions/compile
+        id: compile_kas
+        with:
+          machine: ${{matrix.machine}}
+          distro_yaml: ${{matrix.distro.yamlfile}}
+          distro_name: ${{matrix.distro.name}}
+          kernel_yaml: ${{matrix.kernel.yamlfile}}
+          kernel_dirname: ${{matrix.kernel.dirname}}
+          cache_dir: ${CACHE_DIR}
+          kas: ${KAS_CONTAINER}
+          release-tags: ${{ steps.fetch_tags.outputs.tags }}
