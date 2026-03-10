@@ -1,0 +1,77 @@
+name: Build Yocto
+
+on:
+  workflow_call:
+    inputs:
+      release-tags:
+        description: 'Comma separated tag values'
+        type: string
+        required: false
+        default: ""
+      build-all:
+        description: 'Build all tags'
+        type: boolean
+        required: false
+        default: false
+
+# Concurrency is used to prevent multiple workflows from running for the same PR
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('push-{0}', github.sha) }}
+  cancel-in-progress: true
+
+env:
+  CACHE_DIR: /local/mnt/workspace/efs/qli/meta-qcom-releases
+  KAS_REPO_REF_DIR: /local/mnt/workspace/efs/qli/meta-qcom-releases/kas-mirrors
+  KAS_CONTAINER: /local/mnt/workspace/efs/qli/meta-qcom-releases/kas-mirrors/kas-container
+
+jobs:
+  kas-setup:
+    if: github.repository_owner == 'shivshah3400'
+    runs-on: [self-hosted, qcom-u2404, amd64]
+    steps:
+      - name: Setup kas-container
+        run: |
+          LATEST=$(git ls-remote --tags --refs --sort="v:refname" https://github.com/siemens/kas | tail -n1 | sed 's/.*\///')
+          wget -qO ${KAS_CONTAINER} https://raw.githubusercontent.com/siemens/kas/refs/tags/$LATEST/kas-container
+          chmod +x ${KAS_CONTAINER}
+
+      - name: Update kas mirrors
+        run: |
+          for r in $(find ${KAS_REPO_REF_DIR}/* -maxdepth 0 -type d); do
+            echo "pre-fetch: $r"
+            git -C $r fetch --prune origin '+refs/*:refs/*'
+          done
+
+  compile:
+    needs: kas-setup
+    if: github.repository_owner == 'shivshah3400'
+    runs-on: [self-hosted, qcom-u2404, amd64]
+    strategy:
+      fail-fast: true
+      matrix:
+        machine:
+          - rb3gen2-core-kit
+        distro:
+          - name: qcom-distro-prop-image
+            yamlfile: 'qcom-distro-prop-image.yml'
+        kernel:
+          - type: default
+            dirname: ""
+            yamlfile: ""
+    name: ${{ matrix.machine }}/${{ matrix.distro.name }}${{ matrix.kernel.dirname }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run kas build
+        uses: ./.github/actions/compile
+        id: compile_kas
+        with:
+          machine: ${{matrix.machine}}
+          distro_yaml: ${{matrix.distro.yamlfile}}
+          distro_name: ${{matrix.distro.name}}
+          kernel_yaml: ${{matrix.kernel.yamlfile}}
+          kernel_dirname: ${{matrix.kernel.dirname}}
+          cache_dir: ${CACHE_DIR}
+          kas: ${KAS_CONTAINER}
+          build-all: ${{ inputs.build-all }}
+          release-tags: ${{ inputs.release-tags }}

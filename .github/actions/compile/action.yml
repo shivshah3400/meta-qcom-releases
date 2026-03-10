@@ -1,0 +1,91 @@
+name: Run kas for a specific build configuration
+inputs:
+  machine:
+    required: true
+  distro_yaml:
+    required: true
+  distro_name:
+    required: true
+  kernel_yaml:
+    required: true
+  kernel_dirname:
+    required: true
+  cache_dir:
+    required: true
+  kas:
+    required: true
+  build-all:
+    required: false
+  release-tags:
+    required: false
+
+runs:
+  using: "composite"
+  steps:
+
+    - name: Setup build variables and sstate-cache
+      shell: bash
+      run: |
+        # use a monthly sstate cache folder
+        echo "DL_DIR=${{inputs.cache_dir}}/downloads" >> $GITHUB_ENV
+        echo "SSTATE_DIR=${{inputs.cache_dir}}/sstate-cache-$(date '+%Y-%m')" >> $GITHUB_ENV
+        echo "KAS_WORK_DIR=$PWD" >> $GITHUB_ENV
+
+    - name: Build for specified tags or all tags
+      shell: bash
+      run: |
+        git fetch --tags
+        
+        if [[ "${{ inputs.build-all }}" == "true" ]]; then
+          TAGS=$(git tag --sort=v:refname)
+        else
+          if [[ -n "${{ inputs.release-tags }}" ]]; then
+            TAGS=$(echo "${{ inputs.release-tags }}" | tr ',' '\n' | xargs -I{} echo "{}" | sort -V)
+          else
+            TAGS=""
+          fi
+        fi
+        
+        if [[ -z "$TAGS" ]]; then
+          echo "Building current version only"
+          ${{inputs.kas}} checkout lock.yml
+          cp lock.yml meta-qcom/ci/lock.yml
+          ${{inputs.kas}} build meta-qcom/ci/${{inputs.machine}}.yml:meta-qcom/ci/${{inputs.distro_yaml}}:meta-qcom/ci/lock.yml
+          exit 0
+        fi
+        
+        echo "Tags to build:"
+        echo "$TAGS"
+        
+        # Iterate through each tag
+        echo "$TAGS" | while read -r TAG; do
+          echo "Processing tag: $TAG"
+          
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Error: Tag $TAG not found"
+            continue
+          }
+          
+          BUILD_DIR="build-$TAG"
+          mkdir -p "$BUILD_DIR"
+          cd "$BUILD_DIR"
+          
+          git -C .. checkout "$TAG"
+          
+          if [ ! -f ../lock.yml ]; then
+            echo "Warning: lock.yml not found for tag $TAG, skipping..."
+            cd ..
+            continue
+          fi
+          
+          echo "Building for tag: $TAG"
+          
+          ${{inputs.kas}} checkout ../lock.yml
+          cp ../lock.yml ../meta-qcom/ci/lock.yml
+          
+          ${{inputs.kas}} build ../meta-qcom/ci/${{inputs.machine}}.yml:../meta-qcom/ci/${{inputs.distro_yaml}}:../meta-qcom/ci/lock.yml
+          
+          cd ..
+          echo "Completed build for tag: $TAG"
+          echo "----------------------------------------"
+        done
