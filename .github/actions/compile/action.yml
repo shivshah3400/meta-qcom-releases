@@ -57,9 +57,17 @@ runs:
       shell: bash
       run: |
         cd "$BUILD_DIR"
-        
+        build_cmd="meta-qcom/ci/$INPUTS_MACHINE.yml:meta-qcom/ci/$INPUTS_DISTRO_YAML:meta-qcom/ci/lock.yml"
+
+        if [ ! -f meta-qcom/ci/mirror-download-disable.yml ]; then
+          echo "Warning: mirror-download-disable.yml not found in meta-qcom/ci"
+        else
+          build_cmd="$build_cmd:meta-qcom/ci/mirror-download-disable.yml"
+        fi
+
         echo "Building for tag: $INPUTS_TAG"
-        $KAS build meta-qcom/ci/$INPUTS_MACHINE.yml:meta-qcom/ci/$INPUTS_DISTRO_YAML:meta-qcom/ci/lock.yml
+
+        $KAS build $build_cmd
         
         echo "Completed build for tag: $INPUTS_TAG"
       env:
